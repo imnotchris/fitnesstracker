@@ -16,15 +16,25 @@ import CheckRow from './components/CheckRow.jsx'
 /* ── App shell ───────────────────────────────────────────────── */
 export default function App() {
   const [screen,        setScreen]        = useState('dashboard')
-  const [history,       setHistory]       = useState(INIT_HISTORY)
-  const [prs,           setPrs]           = useState(INIT_PRS)
+  const [history,       setHistory]       = useState(() => {
+    try { const s = localStorage.getItem('ft_history'); return s ? JSON.parse(s) : INIT_HISTORY } catch { return INIT_HISTORY }
+  })
+  const [prs,           setPrs]           = useState(() => {
+    try { const s = localStorage.getItem('ft_prs'); return s ? JSON.parse(s) : INIT_PRS } catch { return INIT_PRS }
+  })
   const [aw,            setAw]            = useState(null)     // active workout
   const [elapsed,       setElapsed]       = useState(0)
   const [warmup,        setWarmup]        = useState([])
   const [cooldown,      setCooldown]      = useState([])
   const [showPicker,    setShowPicker]    = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null)     // id pending delete
-  const [mealsLogged,  setMealsLogged]   = useState({ breakfast: false, lunch: false, dinner: false })
+  const [mealsLogged,  setMealsLogged]   = useState(() => {
+    try {
+      const s = localStorage.getItem('ft_meals')
+      if (s) { const p = JSON.parse(s); if (p.date === new Date().toISOString().slice(0, 10)) return p.meals }
+    } catch {}
+    return { breakfast: false, lunch: false, dinner: false }
+  })
   const timerRef = useRef(null)
 
   /* ── timer ── */
@@ -39,6 +49,16 @@ export default function App() {
     }
     return () => clearInterval(timerRef.current)
   }, [aw?.startTime])
+
+  /* ── persistence ── */
+  useEffect(() => { localStorage.setItem('ft_history', JSON.stringify(history)) }, [history])
+  useEffect(() => { localStorage.setItem('ft_prs',     JSON.stringify(prs))     }, [prs])
+  useEffect(() => {
+    localStorage.setItem('ft_meals', JSON.stringify({
+      date:  new Date().toISOString().slice(0, 10),
+      meals: mealsLogged,
+    }))
+  }, [mealsLogged])
 
   /* ── workout actions ── */
   const startWorkout = (plan) => {
