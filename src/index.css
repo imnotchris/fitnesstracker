@@ -1,0 +1,47 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  background: #0a0b0f;
+}
+
+body {
+  font-family: 'Barlow Condensed', 'Impact', 'Arial Narrow', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* Hide number input spinners */
+input[type='number'] {
+  -moz-appearance: textfield;
+  outline: none;
+}
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+input[type='number']:focus {
+  border-color: #3b82f6 !important;
+}
+
+button {
+  font-family: 'Barlow Condensed', 'Impact', 'Arial Narrow', sans-serif;
+}
+
+/* Thin custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #22252e;
+  border-radius: 2px;
+}
