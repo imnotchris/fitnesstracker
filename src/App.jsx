@@ -43,6 +43,7 @@ export default function App() {
   const [machineNotes,  setMachineNotes]  = useState(() => {
     try { const s = localStorage.getItem('ft_machineNotes'); return s ? JSON.parse(s) : {} } catch { return {} }
   })
+  const [pbDrafts, setPbDrafts] = useState({}) // in-progress text for PB editor fields: { 'ExName:weight': '75', 'ExName:reps': '8' }
   const timerRef    = useRef(null)
   const restRef     = useRef(null)
   const [restTick,  setRestTick] = useState(0)   // forces re-render for countdown
@@ -1076,27 +1077,34 @@ export default function App() {
                       </div>
                       <input
                         type="number"
-                        value={pr?.weight ?? ''}
+                        value={`${ex.name}:weight` in pbDrafts ? pbDrafts[`${ex.name}:weight`] : (pr?.weight ?? '')}
                         placeholder="—"
-                        onChange={(e) => {
-                          const w = parseFloat(e.target.value)
-                          if (!isNaN(w) && w >= 0) {
-                            setPrs((prev) => ({ ...prev, [ex.name]: { weight: w, reps: prev[ex.name]?.reps || ex.reps || 1, date: today, source: 'manual' } }))
-                          } else if (e.target.value === '') {
+                        onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:weight`]: e.target.value }))}
+                        onBlur={(e) => {
+                          const val = e.target.value
+                          if (val === '') {
                             setPrs((prev) => { const n = { ...prev }; delete n[ex.name]; return n })
+                          } else {
+                            const w = parseFloat(val)
+                            if (!isNaN(w) && w >= 0) {
+                              setPrs((prev) => ({ ...prev, [ex.name]: { weight: w, reps: prev[ex.name]?.reps || ex.reps || 1, date: today, source: 'manual' } }))
+                            }
                           }
+                          setPbDrafts((p) => { const n = { ...p }; delete n[`${ex.name}:weight`]; return n })
                         }}
                         style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
                       />
                       <input
                         type="number"
-                        value={pr?.reps ?? ''}
+                        value={`${ex.name}:reps` in pbDrafts ? pbDrafts[`${ex.name}:reps`] : (pr?.reps ?? '')}
                         placeholder="—"
-                        onChange={(e) => {
+                        onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:reps`]: e.target.value }))}
+                        onBlur={(e) => {
                           const r = parseInt(e.target.value)
                           if (!isNaN(r) && r > 0) {
                             setPrs((prev) => ({ ...prev, [ex.name]: { weight: prev[ex.name]?.weight || 0, reps: r, date: prev[ex.name]?.date || today, source: prev[ex.name]?.source || 'manual' } }))
                           }
+                          setPbDrafts((p) => { const n = { ...p }; delete n[`${ex.name}:reps`]; return n })
                         }}
                         style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
                       />
