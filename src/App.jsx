@@ -82,7 +82,9 @@ export default function App() {
       startTime:   Date.now(),
       exercises: plan.exercises.map((ex) => {
         const storedW   = storedWeights[ex.name]
-        const initW     = storedW != null ? storedW : (ex.weight > 0 ? ex.weight : 0)
+        const prW       = prs[ex.name]?.weight
+        const initW     = storedW != null  ? storedW
+                        : (prW  != null && prW > 0 ? prW : (ex.weight > 0 ? ex.weight : 0))
         const isMachine = /cable/i.test(ex.name) || /leg curl/i.test(ex.name)
                        || /cable/i.test(ex.note || '') || /cable/i.test(ex.instructions || '')
         return {
@@ -187,7 +189,7 @@ export default function App() {
           const r   = parseInt(s.reps)     || 0
           const pr  = newPrs[ex.name]
           const isPR = e1RM(w, r) > (pr ? e1RM(pr.weight, pr.reps) : 0)
-          if (isPR) newPrs[ex.name] = { weight: w, reps: r, date: today }
+          if (isPR) newPrs[ex.name] = { weight: w, reps: r, date: today, source: 'workout' }
           return { w, r, isPR }
         }),
       })).filter((ex) => ex.sets.length > 0),
@@ -267,31 +269,6 @@ export default function App() {
 
     return (
       <div>
-        {/* Goal banner */}
-        <div style={{ background: 'linear-gradient(135deg,#0f1729 0%,#0a0b0f 100%)', borderBottom: `1px solid ${C.border}`, padding: '20px 16px 16px' }}>
-          <div style={{ color: C.sub, fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 4 }}>
-            12-Month Body Recomposition
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 30, fontWeight: 900, color: C.text, lineHeight: 1 }}>
-                95<span style={{ fontSize: 16 }}>kg</span>
-              </div>
-              <div style={{ fontSize: 10, color: C.sub, letterSpacing: 1, textTransform: 'uppercase' }}>Now</div>
-            </div>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-              <div style={{ height: 2, width: '100%', background: `linear-gradient(90deg,${C.blue},${C.green})`, borderRadius: 2 }} />
-              <div style={{ fontSize: 10, color: C.sub, letterSpacing: 1 }}>APR 2026 → APR 2027</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 30, fontWeight: 900, color: C.green, lineHeight: 1 }}>
-                87<span style={{ fontSize: 16 }}>kg</span>
-              </div>
-              <div style={{ fontSize: 10, color: C.sub, letterSpacing: 1, textTransform: 'uppercase' }}>Goal</div>
-            </div>
-          </div>
-        </div>
-
         <div style={{ padding: '16px 16px 24px' }}>
           {/* Stats row */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 20 }}>
@@ -1047,9 +1024,6 @@ export default function App() {
      HISTORY
   ══════════════════════════════════════════════════════════ */
   const renderHistory = () => {
-    const sortedPRs = Object.entries(prs)
-      .sort(([, a], [, b]) => e1RM(b.weight, b.reps) - e1RM(a.weight, a.reps))
-
     return (
     <div style={{ padding: 16 }}>
       <div style={{ fontSize: 22, fontWeight: 900, color: C.text, marginBottom: 12 }}>History & Personal Bests</div>
@@ -1068,32 +1042,70 @@ export default function App() {
 
       {/* ── Personal Bests tab ── */}
       {historyTab === 'pbs' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {sortedPRs.length === 0 && (
-            <div style={{ color: C.sub, fontSize: 15, textAlign: 'center', padding: '48px 0' }}>No PRs recorded yet.</div>
-          )}
-          {sortedPRs.map(([name, pr], idx) => {
-            const onePR = e1RM(pr.weight, pr.reps)
-            const isActive = PLANS.some((p) => p.exercises.some((e) => e.name === name))
-            return (
-              <div key={name} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ fontSize: 20, fontWeight: 900, width: 28, color: idx === 0 ? '#eab308' : idx === 1 ? C.sub : idx === 2 ? '#cd7f32' : C.dim, flexShrink: 0, textAlign: 'center' }}>
-                  {idx < 3 ? ['🥇','🥈','🥉'][idx] : `#${idx+1}`}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{name}</div>
-                    {isActive && <span style={{ fontSize: 10, color: C.green, background: C.greenDim, padding: '1px 6px', borderRadius: 4, fontWeight: 700, letterSpacing: 0.5 }}>ACTIVE</span>}
-                  </div>
-                  <div style={{ fontSize: 12, color: C.sub }}>{fmtShort(pr.date)} · {pr.reps} reps · e1RM {onePR}kg</div>
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{ fontSize: 26, fontWeight: 900, color: C.blue, lineHeight: 1 }}>{pr.weight > 0 ? `${pr.weight}kg` : 'BW'}</div>
-                  <div style={{ fontSize: 11, color: C.sub }}>{pr.reps} reps</div>
-                </div>
+        <div>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 14, lineHeight: 1.6, background: C.card2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px' }}>
+            Enter your best set for each exercise. These pre-fill workout weights and drive progression suggestions.
+            Fields marked <span style={{ color: C.green }}>🏋️ workout</span> were auto-detected during a session.
+          </div>
+          {PLANS.map((plan) => (
+            <div key={plan.id} style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: plan.color, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>
+                {plan.name} — {plan.subtitle} · {plan.day}
               </div>
-            )
-          })}
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                {/* Column headers */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 76px 64px', gap: 6, padding: '6px 14px 4px', borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1 }}>EXERCISE</div>
+                  <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1, textAlign: 'center' }}>KG</div>
+                  <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1, textAlign: 'center' }}>REPS</div>
+                </div>
+                {plan.exercises.map((ex, ei) => {
+                  const pr = prs[ex.name]
+                  const today = new Date().toISOString().slice(0, 10)
+                  return (
+                    <div key={ex.name} style={{ display: 'grid', gridTemplateColumns: '1fr 76px 64px', gap: 6, padding: '9px 14px', alignItems: 'center', borderBottom: ei < plan.exercises.length - 1 ? `1px solid ${C.border}` : 'none', background: pr ? 'transparent' : '#0d0f14' }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: pr ? C.text : C.dim }}>{ex.name}</div>
+                        <div style={{ fontSize: 10, color: C.dim, marginTop: 1 }}>
+                          {pr
+                            ? pr.source === 'workout'
+                              ? <span style={{ color: C.green }}>🏋️ {fmtShort(pr.date)}</span>
+                              : <span style={{ color: C.sub }}>✏️ manual</span>
+                            : <span>not set</span>}
+                        </div>
+                      </div>
+                      <input
+                        type="number"
+                        value={pr?.weight ?? ''}
+                        placeholder="—"
+                        onChange={(e) => {
+                          const w = parseFloat(e.target.value)
+                          if (!isNaN(w) && w >= 0) {
+                            setPrs((prev) => ({ ...prev, [ex.name]: { weight: w, reps: prev[ex.name]?.reps || ex.reps || 1, date: today, source: 'manual' } }))
+                          } else if (e.target.value === '') {
+                            setPrs((prev) => { const n = { ...prev }; delete n[ex.name]; return n })
+                          }
+                        }}
+                        style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
+                      />
+                      <input
+                        type="number"
+                        value={pr?.reps ?? ''}
+                        placeholder="—"
+                        onChange={(e) => {
+                          const r = parseInt(e.target.value)
+                          if (!isNaN(r) && r > 0) {
+                            setPrs((prev) => ({ ...prev, [ex.name]: { weight: prev[ex.name]?.weight || 0, reps: r, date: prev[ex.name]?.date || today, source: prev[ex.name]?.source || 'manual' } }))
+                          }
+                        }}
+                        style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
