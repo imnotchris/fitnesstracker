@@ -13,6 +13,16 @@ import {
 import Section  from './components/Section.jsx'
 import CheckRow from './components/CheckRow.jsx'
 
+/* ── Helpers ─────────────────────────────────────────────────── */
+/** True for cable and leg-curl exercises */
+const isMachineEx = (ex) =>
+  /cable/i.test(ex.name) || /leg curl/i.test(ex.name) ||
+  /cable/i.test(ex.note || '') || /cable/i.test(ex.instructions || '')
+
+/** Storage key — machine exercises get "ExName::MachineName", others just "ExName" */
+const mkPrKey = (name, machineNote) =>
+  machineNote?.trim() ? `${name}::${machineNote.trim()}` : name
+
 /* ── App shell ───────────────────────────────────────────────── */
 export default function App() {
   const [screen,        setScreen]        = useState('dashboard')
@@ -82,12 +92,12 @@ export default function App() {
       warmupNote:  plan.warmupNote || null,
       startTime:   Date.now(),
       exercises: plan.exercises.map((ex) => {
-        const storedW   = storedWeights[ex.name]
-        const prW       = prs[ex.name]?.weight
+        const isMachine = isMachineEx(ex)
+        const mKey      = mkPrKey(ex.name, isMachine ? machineNotes[ex.name] : '')
+        const storedW   = storedWeights[mKey] ?? storedWeights[ex.name]
+        const prW       = (prs[mKey] ?? prs[ex.name])?.weight
         const initW     = storedW != null  ? storedW
                         : (prW  != null && prW > 0 ? prW : (ex.weight > 0 ? ex.weight : 0))
-        const isMachine = /cable/i.test(ex.name) || /leg curl/i.test(ex.name)
-                       || /cable/i.test(ex.note || '') || /cable/i.test(ex.instructions || '')
         return {
           name:         ex.name,
           muscleGroup:  ex.muscleGroup,
@@ -186,11 +196,12 @@ export default function App() {
         name:        ex.name,
         muscleGroup: ex.muscleGroup,
         sets: ex.sets.filter((s) => s.completed).map((s) => {
-          const w   = parseFloat(s.weight) || 0
-          const r   = parseInt(s.reps)     || 0
-          const pr  = newPrs[ex.name]
+          const w    = parseFloat(s.weight) || 0
+          const r    = parseInt(s.reps)     || 0
+          const mKey = mkPrKey(ex.name, ex.isMachine ? machineNotes[ex.name] : '')
+          const pr   = newPrs[mKey]
           const isPR = e1RM(w, r) > (pr ? e1RM(pr.weight, pr.reps) : 0)
-          if (isPR) newPrs[ex.name] = { weight: w, reps: r, date: today, source: 'workout' }
+          if (isPR) newPrs[mKey] = { weight: w, reps: r, date: today, source: 'workout' }
           return { w, r, isPR }
         }),
       })).filter((ex) => ex.sets.length > 0),
@@ -204,7 +215,10 @@ export default function App() {
     aw.exercises.forEach((ex) => {
       if (!ex.inc || ex.inc <= 0 || !ex.targetReps) return
       const sugg = suggestWeight(nextHistory, ex.name, ex.targetReps, ex.muscleGroup, ex.inc)
-      if (sugg?.weight != null) newWeights[ex.name] = sugg.weight
+      if (sugg?.weight != null) {
+        const mKey = mkPrKey(ex.name, ex.isMachine ? machineNotes[ex.name] : '')
+        newWeights[mKey] = sugg.weight
+      }
     })
     setStoredWeights(newWeights)
 
@@ -1061,53 +1075,134 @@ export default function App() {
                   <div style={{ fontSize: 9, color: C.dim, fontWeight: 700, letterSpacing: 1, textAlign: 'center' }}>REPS</div>
                 </div>
                 {plan.exercises.map((ex, ei) => {
-                  const pr = prs[ex.name]
-                  const today = new Date().toISOString().slice(0, 10)
-                  return (
-                    <div key={ex.name} style={{ display: 'grid', gridTemplateColumns: '1fr 76px 64px', gap: 6, padding: '9px 14px', alignItems: 'center', borderBottom: ei < plan.exercises.length - 1 ? `1px solid ${C.border}` : 'none', background: pr ? 'transparent' : '#0d0f14' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: pr ? C.text : C.dim }}>{ex.name}</div>
-                        <div style={{ fontSize: 10, color: C.dim, marginTop: 1 }}>
-                          {pr
-                            ? pr.source === 'workout'
+                  const today      = new Date().toISOString().slice(0, 10)
+                  const exIsMachine = isMachineEx(ex)
+                  const isLast     = ei === plan.exercises.length - 1
+                  const rowBorder  = isLast ? 'none' : `1px solid ${C.border}`
+
+                  /* ── Non-machine: single row (same as before) ── */
+                  if (!exIsMachine) {
+                    const pr = prs[ex.name]
+                    return (
+                      <div key={ex.name} style={{ display: 'grid', gridTemplateColumns: '1fr 76px 64px', gap: 6, padding: '9px 14px', alignItems: 'center', borderBottom: rowBorder, background: pr ? 'transparent' : '#0d0f14' }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: pr ? C.text : C.dim }}>{ex.name}</div>
+                          <div style={{ fontSize: 10, color: C.dim, marginTop: 1 }}>
+                            {pr ? pr.source === 'workout'
                               ? <span style={{ color: C.green }}>🏋️ {fmtShort(pr.date)}</span>
                               : <span style={{ color: C.sub }}>✏️ manual</span>
-                            : <span>not set</span>}
+                              : <span>not set</span>}
+                          </div>
                         </div>
+                        <input type="number"
+                          value={`${ex.name}:weight` in pbDrafts ? pbDrafts[`${ex.name}:weight`] : (pr?.weight ?? '')}
+                          placeholder="—"
+                          onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:weight`]: e.target.value }))}
+                          onBlur={(e) => {
+                            const val = e.target.value
+                            if (val === '') { setPrs((prev) => { const n = { ...prev }; delete n[ex.name]; return n }) }
+                            else { const w = parseFloat(val); if (!isNaN(w) && w >= 0) setPrs((prev) => ({ ...prev, [ex.name]: { weight: w, reps: prev[ex.name]?.reps || ex.reps || 1, date: today, source: 'manual' } })) }
+                            setPbDrafts((p) => { const n = { ...p }; delete n[`${ex.name}:weight`]; return n })
+                          }}
+                          style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
+                        />
+                        <input type="number"
+                          value={`${ex.name}:reps` in pbDrafts ? pbDrafts[`${ex.name}:reps`] : (pr?.reps ?? '')}
+                          placeholder="—"
+                          onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:reps`]: e.target.value }))}
+                          onBlur={(e) => {
+                            const r = parseInt(e.target.value)
+                            if (!isNaN(r) && r > 0) setPrs((prev) => ({ ...prev, [ex.name]: { weight: prev[ex.name]?.weight || 0, reps: r, date: prev[ex.name]?.date || today, source: prev[ex.name]?.source || 'manual' } }))
+                            setPbDrafts((p) => { const n = { ...p }; delete n[`${ex.name}:reps`]; return n })
+                          }}
+                          style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
+                        />
                       </div>
-                      <input
-                        type="number"
-                        value={`${ex.name}:weight` in pbDrafts ? pbDrafts[`${ex.name}:weight`] : (pr?.weight ?? '')}
-                        placeholder="—"
-                        onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:weight`]: e.target.value }))}
-                        onBlur={(e) => {
-                          const val = e.target.value
-                          if (val === '') {
-                            setPrs((prev) => { const n = { ...prev }; delete n[ex.name]; return n })
-                          } else {
-                            const w = parseFloat(val)
-                            if (!isNaN(w) && w >= 0) {
-                              setPrs((prev) => ({ ...prev, [ex.name]: { weight: w, reps: prev[ex.name]?.reps || ex.reps || 1, date: today, source: 'manual' } }))
-                            }
-                          }
-                          setPbDrafts((p) => { const n = { ...p }; delete n[`${ex.name}:weight`]; return n })
-                        }}
-                        style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
-                      />
-                      <input
-                        type="number"
-                        value={`${ex.name}:reps` in pbDrafts ? pbDrafts[`${ex.name}:reps`] : (pr?.reps ?? '')}
-                        placeholder="—"
-                        onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:reps`]: e.target.value }))}
-                        onBlur={(e) => {
-                          const r = parseInt(e.target.value)
-                          if (!isNaN(r) && r > 0) {
-                            setPrs((prev) => ({ ...prev, [ex.name]: { weight: prev[ex.name]?.weight || 0, reps: r, date: prev[ex.name]?.date || today, source: prev[ex.name]?.source || 'manual' } }))
-                          }
-                          setPbDrafts((p) => { const n = { ...p }; delete n[`${ex.name}:reps`]; return n })
-                        }}
-                        style={{ width: '100%', background: C.card2, border: `1px solid ${pr ? C.border : C.dim}`, borderRadius: 6, color: C.text, fontSize: 15, fontWeight: 700, fontFamily: FONT, padding: '6px 4px', textAlign: 'center', boxSizing: 'border-box' }}
-                      />
+                    )
+                  }
+
+                  /* ── Machine exercise: per-machine sub-rows ── */
+                  const machineKeys = Object.keys(prs).filter((k) => k.startsWith(ex.name + '::'))
+                  const inputSty    = { background: C.card2, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontFamily: FONT, padding: '5px 4px', textAlign: 'center', boxSizing: 'border-box', width: '100%' }
+                  const commitNew = () => {
+                    const m = pbDrafts[`${ex.name}:newMachine`]?.trim()
+                    const w = parseFloat(pbDrafts[`${ex.name}:newWeight`])
+                    const r = parseInt(pbDrafts[`${ex.name}:newReps`])
+                    if (m && !isNaN(w) && w >= 0 && !isNaN(r) && r > 0) {
+                      const key = mkPrKey(ex.name, m)
+                      setPrs((prev) => ({ ...prev, [key]: { weight: w, reps: r, date: today, source: 'manual' } }))
+                      setPbDrafts((p) => { const n = { ...p }; delete n[`${ex.name}:newMachine`]; delete n[`${ex.name}:newWeight`]; delete n[`${ex.name}:newReps`]; return n })
+                    }
+                  }
+                  return (
+                    <div key={ex.name} style={{ borderBottom: rowBorder }}>
+                      {/* Exercise header */}
+                      <div style={{ padding: '8px 14px 3px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>📍 {ex.name}</span>
+                        <span style={{ fontSize: 10, color: C.dim }}>per machine</span>
+                      </div>
+                      {/* Existing machine rows */}
+                      {machineKeys.map((key) => {
+                        const machineName = key.split('::').slice(1).join('::')
+                        const pr = prs[key]
+                        return (
+                          <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 76px 64px 26px', gap: 5, padding: '5px 14px', alignItems: 'center', background: '#0d0f14' }}>
+                            <div>
+                              <div style={{ fontSize: 12, color: C.sub, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{machineName}</div>
+                              <div style={{ fontSize: 9, color: C.dim }}>
+                                {pr.source === 'workout' ? <span style={{ color: C.green }}>🏋️ {fmtShort(pr.date)}</span> : <span>✏️ manual</span>}
+                              </div>
+                            </div>
+                            <input type="number"
+                              value={`${key}:weight` in pbDrafts ? pbDrafts[`${key}:weight`] : (pr?.weight ?? '')}
+                              placeholder="—"
+                              onChange={(e) => setPbDrafts((p) => ({ ...p, [`${key}:weight`]: e.target.value }))}
+                              onBlur={(e) => {
+                                const val = e.target.value
+                                if (val === '') { setPrs((prev) => { const n = { ...prev }; delete n[key]; return n }) }
+                                else { const w = parseFloat(val); if (!isNaN(w) && w >= 0) setPrs((prev) => ({ ...prev, [key]: { ...prev[key], weight: w, source: 'manual' } })) }
+                                setPbDrafts((p) => { const n = { ...p }; delete n[`${key}:weight`]; return n })
+                              }}
+                              style={{ ...inputSty, fontSize: 14, fontWeight: 700 }}
+                            />
+                            <input type="number"
+                              value={`${key}:reps` in pbDrafts ? pbDrafts[`${key}:reps`] : (pr?.reps ?? '')}
+                              placeholder="—"
+                              onChange={(e) => setPbDrafts((p) => ({ ...p, [`${key}:reps`]: e.target.value }))}
+                              onBlur={(e) => {
+                                const r = parseInt(e.target.value)
+                                if (!isNaN(r) && r > 0) setPrs((prev) => ({ ...prev, [key]: { ...prev[key], reps: r, source: 'manual' } }))
+                                setPbDrafts((p) => { const n = { ...p }; delete n[`${key}:reps`]; return n })
+                              }}
+                              style={{ ...inputSty, fontSize: 14, fontWeight: 700 }}
+                            />
+                            <button onClick={() => setPrs((prev) => { const n = { ...prev }; delete n[key]; return n })}
+                              style={{ background: 'none', border: 'none', color: C.dim, fontSize: 16, cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+                          </div>
+                        )
+                      })}
+                      {/* Add new machine row */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 76px 64px 26px', gap: 5, padding: '5px 14px 9px', alignItems: 'center' }}>
+                        <input
+                          placeholder="+ machine / station"
+                          value={pbDrafts[`${ex.name}:newMachine`] || ''}
+                          onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:newMachine`]: e.target.value }))}
+                          style={{ ...inputSty, fontSize: 11, color: C.sub, textAlign: 'left', padding: '5px 7px' }}
+                        />
+                        <input type="number" placeholder="—"
+                          value={pbDrafts[`${ex.name}:newWeight`] || ''}
+                          onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:newWeight`]: e.target.value }))}
+                          onBlur={commitNew}
+                          style={{ ...inputSty, fontSize: 14, fontWeight: 700 }}
+                        />
+                        <input type="number" placeholder="—"
+                          value={pbDrafts[`${ex.name}:newReps`] || ''}
+                          onChange={(e) => setPbDrafts((p) => ({ ...p, [`${ex.name}:newReps`]: e.target.value }))}
+                          onBlur={commitNew}
+                          style={{ ...inputSty, fontSize: 14, fontWeight: 700 }}
+                        />
+                        <div />
+                      </div>
                     </div>
                   )
                 })}
