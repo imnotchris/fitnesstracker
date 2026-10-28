@@ -4,7 +4,7 @@ import {
   LineChart, Line, ResponsiveContainer,
 } from 'recharts'
 
-import { C, FONT, PLANS, WARMUP_ACTIVATION, WARMUP_SETS_NOTE, MOBILITY_MOVES, CARDIO_SESSIONS, EXTRA, INIT_PRS, INIT_HISTORY, BREAKFAST, LUNCH, DINNERS, DINNER_BY_DAY, DAILY_TARGETS } from './data.js'
+import { C, FONT, PLANS, WARMUP_ACTIVATION, WARMUP_SETS_NOTE, MOBILITY_MOVES, CARDIO_SESSIONS, EXTRA, INIT_PRS, INIT_HISTORY } from './data.js'
 import {
   fmtTimer, fmtDur, fmtDate, fmtShort,
   e1RM, calcStreak, thisWeekCount,
@@ -37,12 +37,11 @@ export default function App() {
   const [customForm,   setCustomForm]    = useState(null)     // null | { name, exercises[] }
   const [customExInp,  setCustomExInp]   = useState({ name: '', mg: '', sets: 3, reps: 8, weight: 0 })
   const [freeExInp,    setFreeExInp]     = useState({ name: '', mg: '' })
-  const [mealsLogged,  setMealsLogged]   = useState(() => {
-    try {
-      const s = localStorage.getItem('ft_meals')
-      if (s) { const p = JSON.parse(s); if (p.date === new Date().toISOString().slice(0, 10)) return p.meals }
-    } catch {}
-    return { breakfast: false, lunch: false, dinner: false }
+  const [storedWeights, setStoredWeights] = useState(() => {
+    try { const s = localStorage.getItem('ft_weights'); return s ? JSON.parse(s) : {} } catch { return {} }
+  })
+  const [machineNotes,  setMachineNotes]  = useState(() => {
+    try { const s = localStorage.getItem('ft_machineNotes'); return s ? JSON.parse(s) : {} } catch { return {} }
   })
   const timerRef    = useRef(null)
   const restRef     = useRef(null)
@@ -68,14 +67,10 @@ export default function App() {
   }, [])
 
   /* ── persistence ── */
-  useEffect(() => { localStorage.setItem('ft_history', JSON.stringify(history)) }, [history])
-  useEffect(() => { localStorage.setItem('ft_prs',     JSON.stringify(prs))     }, [prs])
-  useEffect(() => {
-    localStorage.setItem('ft_meals', JSON.stringify({
-      date:  new Date().toISOString().slice(0, 10),
-      meals: mealsLogged,
-    }))
-  }, [mealsLogged])
+  useEffect(() => { localStorage.setItem('ft_history',      JSON.stringify(history))       }, [history])
+  useEffect(() => { localStorage.setItem('ft_prs',          JSON.stringify(prs))           }, [prs])
+  useEffect(() => { localStorage.setItem('ft_weights',      JSON.stringify(storedWeights)) }, [storedWeights])
+  useEffect(() => { localStorage.setItem('ft_machineNotes', JSON.stringify(machineNotes))  }, [machineNotes])
 
   /* ── workout actions ── */
   const startWorkout = (plan) => {
@@ -85,24 +80,31 @@ export default function App() {
       planColor:   plan.color,
       warmupNote:  plan.warmupNote || null,
       startTime:   Date.now(),
-      exercises: plan.exercises.map((ex) => ({
-        name:         ex.name,
-        muscleGroup:  ex.muscleGroup,
-        note:         ex.note || null,
-        targetReps:   ex.reps,
-        repsMin:      ex.repsMin ?? null,
-        inc:          ex.inc ?? null,
-        effort:       ex.effort || null,
-        effortNote:   ex.effortNote || null,
-        restSec:      ex.restSec || 90,
-        warmupSets:   ex.warmupSets || null,
-        instructions: ex.instructions || null,
-        sets: Array.from({ length: ex.sets }, () => ({
-          weight:    ex.weight > 0 ? String(ex.weight) : '',
-          reps:      ex.repsMin ? String(ex.repsMin) : ex.reps ? String(ex.reps) : '',
-          completed: false,
-        })),
-      })),
+      exercises: plan.exercises.map((ex) => {
+        const storedW   = storedWeights[ex.name]
+        const initW     = storedW != null ? storedW : (ex.weight > 0 ? ex.weight : 0)
+        const isMachine = /cable/i.test(ex.name) || /leg curl/i.test(ex.name)
+                       || /cable/i.test(ex.note || '') || /cable/i.test(ex.instructions || '')
+        return {
+          name:         ex.name,
+          muscleGroup:  ex.muscleGroup,
+          note:         ex.note || null,
+          targetReps:   ex.reps,
+          repsMin:      ex.repsMin ?? null,
+          inc:          ex.inc ?? null,
+          effort:       ex.effort || null,
+          effortNote:   ex.effortNote || null,
+          restSec:      ex.restSec || 90,
+          warmupSets:   ex.warmupSets || null,
+          instructions: ex.instructions || null,
+          isMachine,
+          sets: Array.from({ length: ex.sets }, () => ({
+            weight:    initW > 0 ? String(initW) : '',
+            reps:      ex.repsMin ? String(ex.repsMin) : ex.reps ? String(ex.reps) : '',
+            completed: false,
+          })),
+        }
+      }),
     })
     setWarmupOpt('bike')
     setMobDone(Array(MOBILITY_MOVES.length).fill(false))
@@ -192,6 +194,17 @@ export default function App() {
     }
     setPrs(newPrs)
     setHistory((prev) => [entry, ...prev])
+
+    // Auto-update next-session weights
+    const nextHistory  = [entry, ...history]
+    const newWeights   = { ...storedWeights }
+    aw.exercises.forEach((ex) => {
+      if (!ex.inc || ex.inc <= 0 || !ex.targetReps) return
+      const sugg = suggestWeight(nextHistory, ex.name, ex.targetReps, ex.muscleGroup, ex.inc)
+      if (sugg?.weight != null) newWeights[ex.name] = sugg.weight
+    })
+    setStoredWeights(newWeights)
+
     setAw(null)
     setElapsed(0)
     setRestTimer(null)
@@ -823,6 +836,18 @@ export default function App() {
                       )}
                     </div>
                   )}
+                  {/* Machine / station note — cable and leg curl exercises only */}
+                  {ex.isMachine && (
+                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: C.dim, flexShrink: 0, fontWeight: 700 }}>📍</span>
+                      <input
+                        placeholder="Which machine / station? (e.g. left cable stack, machine 3)"
+                        value={machineNotes[ex.name] || ''}
+                        onChange={(e) => setMachineNotes((p) => ({ ...p, [ex.name]: e.target.value }))}
+                        style={{ flex: 1, background: C.card2, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontSize: 12, fontFamily: FONT, padding: '5px 9px' }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Warm-up sets */}
@@ -1238,160 +1263,15 @@ export default function App() {
     )
   }
 
-  /* ══════════════════════════════════════════════════════════
-     NUTRITION
-  ══════════════════════════════════════════════════════════ */
-  const renderNutrition = () => {
-    const DAY_NAMES  = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
-    const DAY_SHORT  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
-    const dayOfWeek  = new Date().getDay()
-    const todayName  = DAY_NAMES[dayOfWeek]
-    const todayDinner = DINNERS[DINNER_BY_DAY[dayOfWeek]]
-
-    const loggedKcal    = (mealsLogged.breakfast ? BREAKFAST.kcal    : 0)
-                        + (mealsLogged.lunch     ? LUNCH.kcal        : 0)
-                        + (mealsLogged.dinner    ? todayDinner.kcal  : 0)
-    const loggedProtein = (mealsLogged.breakfast ? BREAKFAST.protein : 0)
-                        + (mealsLogged.lunch     ? LUNCH.protein     : 0)
-                        + (mealsLogged.dinner    ? todayDinner.protein : 0)
-
-    const pctP = Math.min(loggedProtein / DAILY_TARGETS.protein * 100, 100)
-    const pctK = Math.min(loggedKcal    / DAILY_TARGETS.kcal    * 100, 100)
-
-    const MEAL_SLOTS = [
-      { key: 'breakfast', label: 'Breakfast', meal: BREAKFAST },
-      { key: 'lunch',     label: 'Lunch',     meal: LUNCH },
-      { key: 'dinner',    label: 'Dinner',    meal: todayDinner },
-    ]
-
-    return (
-      <div style={{ padding: 16, paddingBottom: 24 }}>
-        {/* Header */}
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 22, fontWeight: 900, color: C.text }}>{todayName}'s Nutrition</div>
-          <div style={{ fontSize: 13, color: C.sub }}>Targets: {DAILY_TARGETS.protein}g protein · {DAILY_TARGETS.kcal} kcal</div>
-        </div>
-
-        {/* Macro progress */}
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 16px', marginBottom: 16 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 14 }}>
-            Today's Progress
-          </div>
-          {[
-            { label: 'Protein', current: loggedProtein, target: DAILY_TARGETS.protein, unit: 'g', color: loggedProtein >= DAILY_TARGETS.protein ? C.green : C.blue, pct: pctP },
-            { label: 'Calories', current: loggedKcal, target: DAILY_TARGETS.kcal, unit: ' kcal', color: C.orange, pct: pctK },
-          ].map((m) => (
-            <div key={m.label} style={{ marginBottom: 14 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{m.label}</span>
-                <span style={{ fontSize: 14, fontWeight: 800, color: m.color }}>
-                  {m.current}{m.unit} <span style={{ color: C.sub, fontWeight: 400, fontSize: 12 }}>/ {m.target}{m.unit}</span>
-                </span>
-              </div>
-              <div style={{ height: 8, background: C.dim, borderRadius: 4, overflow: 'hidden' }}>
-                <div style={{ width: `${m.pct}%`, height: '100%', background: m.color, borderRadius: 4, transition: 'width 0.3s ease' }} />
-              </div>
-            </div>
-          ))}
-          {/* Macro grid summary */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6, marginTop: 4 }}>
-            {[
-              { label: 'Protein', value: `${loggedProtein}g`, color: C.blue },
-              { label: 'Carbs',   value: `${(mealsLogged.breakfast ? BREAKFAST.carbs : 0) + (mealsLogged.lunch ? LUNCH.carbs : 0) + (mealsLogged.dinner ? todayDinner.carbs : 0)}g`, color: C.purple },
-              { label: 'Fat',     value: `${(mealsLogged.breakfast ? BREAKFAST.fat : 0) + (mealsLogged.lunch ? LUNCH.fat : 0) + (mealsLogged.dinner ? todayDinner.fat : 0)}g`, color: C.green },
-              { label: 'kcal',    value: `${loggedKcal}`, color: C.orange },
-            ].map((m) => (
-              <div key={m.label} style={{ background: C.card2, borderRadius: 6, padding: '6px 4px', textAlign: 'center' }}>
-                <div style={{ fontSize: 16, fontWeight: 900, color: m.color, lineHeight: 1 }}>{m.value}</div>
-                <div style={{ fontSize: 10, color: C.dim, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>{m.label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Meal cards */}
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 10 }}>
-          Today's Meals
-        </div>
-        {MEAL_SLOTS.map(({ key, label, meal }) => {
-          const logged = mealsLogged[key]
-          return (
-            <div key={key} style={{ background: C.card, border: `1px solid ${logged ? C.green : C.border}`, borderRadius: 12, marginBottom: 10, overflow: 'hidden' }}>
-              {/* Card header */}
-              <div style={{ padding: '12px 14px 10px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, color: logged ? C.green : C.sub, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 2 }}>
-                    {label}
-                  </div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>{meal.name}</div>
-                </div>
-                <button
-                  onClick={() => setMealsLogged((p) => ({ ...p, [key]: !p[key] }))}
-                  style={{ background: logged ? C.green : C.card2, border: `1px solid ${logged ? C.green : C.border}`, borderRadius: 8, color: logged ? '#fff' : C.sub, padding: '7px 12px', fontSize: 13, fontWeight: 800, cursor: 'pointer', fontFamily: FONT, flexShrink: 0, letterSpacing: 0.5 }}>
-                  {logged ? '✓ DONE' : 'LOG'}
-                </button>
-              </div>
-              {/* Card body */}
-              <div style={{ padding: '10px 14px 12px' }}>
-                <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.6, marginBottom: 10 }}>{meal.desc}</div>
-                {/* Macros */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6, marginBottom: 10 }}>
-                  {[
-                    { label: 'kcal',    value: meal.kcal,            color: C.orange },
-                    { label: 'protein', value: `${meal.protein}g`,   color: C.blue },
-                    { label: 'carbs',   value: `${meal.carbs}g`,     color: C.purple },
-                    { label: 'fat',     value: `${meal.fat}g`,       color: C.green },
-                  ].map((m) => (
-                    <div key={m.label} style={{ background: C.card2, borderRadius: 6, padding: '6px 4px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 15, fontWeight: 900, color: m.color, lineHeight: 1 }}>{m.value}</div>
-                      <div style={{ fontSize: 10, color: C.dim, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 }}>{m.label}</div>
-                    </div>
-                  ))}
-                </div>
-                {/* Tip */}
-                <div style={{ background: C.card2, borderRadius: 6, padding: '8px 10px', borderLeft: `2px solid ${C.blue}` }}>
-                  <span style={{ fontSize: 11, color: C.sub, fontStyle: 'italic' }}>💡 {meal.tip}</span>
-                </div>
-              </div>
-            </div>
-          )
-        })}
-
-        {/* Weekly dinner rotation */}
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 10, marginTop: 6 }}>
-          Dinner Rotation
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {DAY_SHORT.map((day, idx) => {
-            const dinner  = DINNERS[DINNER_BY_DAY[idx]]
-            const isToday = idx === dayOfWeek
-            return (
-              <div key={day} style={{ background: isToday ? C.card2 : C.card, border: `1px solid ${isToday ? C.blue : C.border}`, borderLeft: `3px solid ${isToday ? C.blue : C.dim}`, borderRadius: 8, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: isToday ? C.blue : C.dim, width: 32, flexShrink: 0 }}>{day}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: isToday ? C.text : C.sub }}>{dinner.name}</div>
-                  <div style={{ fontSize: 11, color: C.dim }}>{dinner.kcal} kcal · {dinner.protein}g protein</div>
-                </div>
-                {isToday && (
-                  <span style={{ fontSize: 11, color: C.blue, fontWeight: 700, background: C.blueDim, padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>TODAY</span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    )
-  }
 
   /* ══════════════════════════════════════════════════════════
      SHELL — nav + screen router
   ══════════════════════════════════════════════════════════ */
   const TABS = [
-    { id: 'dashboard', label: 'Home',      icon: '⚡' },
-    { id: 'workout',   label: 'Workout',   icon: '🏋️' },
-    { id: 'history',   label: 'History',   icon: '📋' },
-    { id: 'progress',  label: 'Progress',  icon: '📈' },
-    { id: 'nutrition', label: 'Nutrition', icon: '🥗' },
+    { id: 'dashboard', label: 'Home',     icon: '⚡' },
+    { id: 'workout',   label: 'Workout',  icon: '🏋️' },
+    { id: 'history',   label: 'History',  icon: '📋' },
+    { id: 'progress',  label: 'Progress', icon: '📈' },
   ]
 
   return (
@@ -1403,7 +1283,6 @@ export default function App() {
         {screen === 'workout'   && renderWorkout()}
         {screen === 'history'   && renderHistory()}
         {screen === 'progress'  && renderProgress()}
-        {screen === 'nutrition' && renderNutrition()}
       </div>
 
       {/* Bottom nav */}
